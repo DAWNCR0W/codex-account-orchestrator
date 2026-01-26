@@ -1,0 +1,40 @@
+{
+  "name": "codex-account-orchestrator",
+  "version": "0.1.0",
+  "description": "Codex OAuth account fallback orchestrator",
+  "main": "dist/cli_main.js",
+  "types": "dist/cli_main.d.ts",
+  "bin": {
+    "codex-account-orchestrator": "dist/cli_main.js",
+    "cao": "dist/cli_main.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/cli_main.js"
+  },
+  "keywords": [
+    "codex",
+    "oauth",
+    "account",
+    "fallback",
+    "orchestrator"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^14.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.10",
+    "typescript": "^5.9.3"
+  }
+}

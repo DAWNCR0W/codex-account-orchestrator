@@ -72,7 +72,7 @@ cao --data-dir /path/to/data run -- codex
   - `~/.codex-account-orchestrator/<account>/`
 - A `config.toml` is created with:
   - `cli_auth_credentials_store = "file"`
-  - `preferred_auth_method = "chatgpt"`
+  - `forced_login_method = "chatgpt"`
 - On quota errors (detected via output keywords), the CLI re-runs Codex with the next account and can recheck all accounts for a configurable number of passes.
 
 ## Notes

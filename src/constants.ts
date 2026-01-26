@@ -3,7 +3,7 @@ export const REGISTRY_FILE_NAME = "registry.json";
 export const DEFAULT_CONFIG_TOML = [
   "# Codex config for this account",
   "cli_auth_credentials_store = \"file\"",
-  "preferred_auth_method = \"chatgpt\"",
+  "forced_login_method = \"chatgpt\"",
   ""
 ].join("\n");
 

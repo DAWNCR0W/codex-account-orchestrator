@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-01-27
+
+### Added
+
+- `cao status --pretty` dashboard view (TTY default)
+- `cao status --doctor` and `cao status --report` consolidated flags
+
+### Changed
+
+- `cao status` now defaults to a dashboard in TTY and compact output otherwise
+- `cao doctor` and `cao report` are deprecated (status flags preferred)
+- `cao list --details` removed in favor of `cao status`
+- Added Chinese and Spanish README translations
+
 ## [1.3.0] - 2026-01-27
 
 ### Added

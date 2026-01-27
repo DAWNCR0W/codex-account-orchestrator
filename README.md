@@ -1,6 +1,23 @@
-# codex-account-orchestrator
+# codex-account-orchestrator (CAO)
 
-Codex OAuth account fallback orchestrator. It keeps **separate `CODEX_HOME` directories per account** and automatically falls back to the next account when quota is exhausted.
+[![CI](https://github.com/DAWNCR0W/codex-account-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/DAWNCR0W/codex-account-orchestrator/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/codex-account-orchestrator.svg)](https://www.npmjs.com/package/codex-account-orchestrator)
+[![npm downloads](https://img.shields.io/npm/dm/codex-account-orchestrator.svg)](https://www.npmjs.com/package/codex-account-orchestrator)
+[![license](https://img.shields.io/npm/l/codex-account-orchestrator.svg)](LICENSE)
+[![node](https://img.shields.io/node/v/codex-account-orchestrator.svg)](https://nodejs.org/)
+[![typescript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+
+Codex OAuth account fallback orchestrator. CAO keeps **separate `CODEX_HOME` directories per account** and automatically falls back to the next account when quota is exhausted.
+
+> If you juggle multiple Codex accounts, CAO removes the friction and keeps you moving.
+
+## Highlights
+
+- Per-account isolation via separate `CODEX_HOME` directories
+- Automatic fallback on quota exhaustion (keyword-based detector)
+- Gateway mode for seamless account switching without session drops
+- Lightweight observability via `cao status` and `cao list --details`
+- Strict TypeScript build with a small, dependency-light CLI
 
 ## Requirements
 
@@ -23,9 +40,9 @@ npm run build
 npm link  # Makes 'cao' command available globally
 ```
 
-## Usage
+## Quick Start
 
-### Add accounts
+### 1. Add accounts
 
 ```bash
 cao add accountA
@@ -44,31 +61,13 @@ If you prefer device auth:
 cao add accountA --device-auth
 ```
 
-### Set default account
+### 2. Set the default account
 
 ```bash
 cao use accountA
 ```
 
-### List accounts
-
-```bash
-cao list
-```
-
-### Remove an account
-
-```bash
-cao remove accountB
-```
-
-To keep files on disk:
-
-```bash
-cao remove accountB --keep-files
-```
-
-### Run with fallback
+### 3. Run with fallback
 
 ```bash
 cao run
@@ -86,28 +85,40 @@ To recheck all accounts when everyone is quota-limited, use multiple passes:
 cao run --max-passes 2 --retry-delay 5
 ```
 
-### Run a specific account (no fallback)
+## Account Status & Observability
+
+### List accounts (quick)
 
 ```bash
-cao run --no-fallback --account accountB -- codex
+cao list
 ```
 
-### Custom data directory
+### Detailed status (recommended)
 
 ```bash
-cao --data-dir /path/to/data run -- codex
+cao status
 ```
 
-## How it works
+You can also use:
 
-- Each account is stored in its own `CODEX_HOME` directory under:
-  - `~/.codex-account-orchestrator/<account>/`
-- A `config.toml` is created with:
-  - `cli_auth_credentials_store = "file"`
-  - `forced_login_method = "chatgpt"`
-- On quota errors (detected via output keywords), the CLI re-runs Codex with the next account and can recheck all accounts for a configurable number of passes.
+```bash
+cao list --details
+```
 
-## Gateway mode (no session drop)
+### JSON output for scripting
+
+```bash
+cao status --json
+```
+
+This includes useful signals such as:
+
+- Token expiry time
+- Last refresh time
+- Last attempt / success / quota-hit timestamps
+- Cooldown window and consecutive failures
+
+## Gateway Mode (No Session Drop)
 
 Gateway mode keeps the Codex session open while switching accounts on quota errors. It requires routing Codex traffic through the local gateway.
 
@@ -153,17 +164,59 @@ If `~/.local/bin` is not in your PATH, add it so the shim is used.
 cao gateway status
 ```
 
-### Debug logging
+## How It Works
 
-Set `CAO_DEBUG_HEADERS=1` to log sanitized request/response headers in the gateway process. To capture the last request body for inspection, also set `CAO_CAPTURE_BODY=1` (saved to `/tmp/cao-last-body.json` by default).
+- Each account is stored in its own `CODEX_HOME` directory: `~/.codex-account-orchestrator/<account>/`
+- A `config.toml` is created with the following values:
 
-Additional debug flags:
+```toml
+cli_auth_credentials_store = "file"
+forced_login_method = "chatgpt"
+```
 
-- `CAO_DEBUG_BODY=1` to log a sanitized body snippet.
-- `CAO_CAPTURE_BODY_PATH=/path/to/file.json` to override the capture path.
-- `CAO_FORCE_QUOTA_ACCOUNTS=accountA,accountB` to simulate quota failures for specific accounts.
+- On quota errors (detected via output keywords), the CLI re-runs Codex with the next account and can recheck all accounts for a configurable number of passes.
+- CAO now persists lightweight status signals to `account_status.json` for visibility.
+
+## Data Layout
+
+Default base directory:
+
+```text
+~/.codex-account-orchestrator/
+```
+
+Key files:
+
+- `registry.json`: registered accounts and default account
+- `account_status.json`: persisted last-attempt/success/quota/cooldown signals
+- `<account>/auth.json`: account-scoped tokens managed by Codex
+- `<account>/config.toml`: account-scoped Codex configuration
+
+## Development
+
+Build:
+
+```bash
+npm run build
+```
+
+Test (build + Node test runner):
+
+```bash
+npm run test
+```
+
+Run locally after build:
+
+```bash
+node dist/cli_main.js --help
+```
 
 ## Notes
 
 - Fallback requires capturing output; this may make Codex detect a non-TTY stdout. If you want a pure TTY session, use `--no-fallback`.
 - The quota detector is keyword-based and can be extended in `src/constants.ts`.
+
+## Changelog
+
+See `CHANGELOG.md` for release notes and version history.

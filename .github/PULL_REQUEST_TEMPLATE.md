@@ -1,6 +1,11 @@
-## Description
+## Summary
 
-<!-- Describe your changes -->
+<!-- Describe your changes in 1-3 short sentences -->
+
+## Changes
+
+<!-- List the key changes -->
+- 
 
 ## Type of Change
 
@@ -11,6 +16,6 @@
 
 ## Checklist
 
-- [ ] Code builds without errors (`npm run build`)
+- [ ] Code builds and tests pass (`npm run test`)
 - [ ] Changes are documented in README if needed
 - [ ] CHANGELOG.md is updated for notable changes

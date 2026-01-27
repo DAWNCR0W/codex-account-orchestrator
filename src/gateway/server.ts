@@ -12,6 +12,10 @@ export function startGatewayServer(pool: AccountPool, config: GatewayConfig): ht
       await gateway.handleRequest(req, res);
     } catch (error) {
       const message = error instanceof Error ? error.message : "gateway_error";
+      if (res.headersSent || res.writableEnded) {
+        res.destroy();
+        return;
+      }
       res.writeHead(500, { "content-type": "text/plain" });
       res.end(message);
     }

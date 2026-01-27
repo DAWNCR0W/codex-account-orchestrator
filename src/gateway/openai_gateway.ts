@@ -25,6 +25,10 @@ export class OpenAiGateway {
     }
 
     const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+    const clientAbort = new AbortController();
+    const abortHandler = () => clientAbort.abort();
+    req.once("aborted", abortHandler);
+    res.once("close", abortHandler);
 
     if (req.method === "GET" && url.pathname === "/health") {
       res.writeHead(200, { "content-type": "application/json" });
@@ -40,6 +44,9 @@ export class OpenAiGateway {
     let attempts = 0;
 
     while (attempts < this.config.maxRetryPasses + this.pool.getAccounts().length) {
+      if (clientAbort.signal.aborted) {
+        return;
+      }
       attempts += 1;
 
       const selected = this.selectAccount(sessionKey, excluded);
@@ -53,7 +60,11 @@ export class OpenAiGateway {
         `Gateway: ${req.method ?? "REQ"} ${url.pathname} -> ${selected.name}\n`
       );
 
-      const response = await this.forwardRequest(selected, req, body);
+      const response = await this.forwardRequest(selected, req, body, clientAbort.signal);
+
+      if (response.aborted || clientAbort.signal.aborted) {
+        return;
+      }
 
       if (response.ok) {
         this.pool.markSuccess(selected);
@@ -108,7 +119,8 @@ export class OpenAiGateway {
   private async forwardRequest(
     account: AccountState,
     req: IncomingMessage,
-    body: Buffer
+    body: Buffer,
+    abortSignal: AbortSignal
   ): Promise<ForwardResult> {
     const targetUrl = buildTargetUrl(this.config.baseUrl, req.url ?? "");
 
@@ -135,7 +147,7 @@ export class OpenAiGateway {
 
     const attempt = async (token?: string): Promise<ForwardResult> => {
       const headers = buildForwardHeaders(req, account, token, this.config);
-      return this.fetchOnce(targetUrl, req.method, headers, body);
+      return this.fetchOnce(targetUrl, req.method, headers, body, abortSignal);
     };
 
     let response = await attempt(accessToken);
@@ -152,11 +164,20 @@ export class OpenAiGateway {
     targetUrl: URL,
     method: string | undefined,
     headers: Headers,
-    body: Buffer
+    body: Buffer,
+    externalSignal?: AbortSignal
   ): Promise<ForwardResult> {
     logUpstreamDebug(method ?? "REQ", targetUrl, headers);
 
     const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        controller.abort();
+      } else {
+        externalSignal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
     const timeout = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
 
     try {
@@ -168,6 +189,9 @@ export class OpenAiGateway {
       });
 
       clearTimeout(timeout);
+      if (externalSignal) {
+        externalSignal.removeEventListener("abort", onAbort);
+      }
 
       if (response.status === 401 || response.status === 403) {
         return {
@@ -210,6 +234,28 @@ export class OpenAiGateway {
       };
     } catch (error) {
       clearTimeout(timeout);
+      if (externalSignal) {
+        externalSignal.removeEventListener("abort", onAbort);
+      }
+      if (error instanceof Error && error.name === "AbortError") {
+        if (externalSignal?.aborted) {
+          return {
+            ok: false,
+            status: 499,
+            authFailure: false,
+            quota: false,
+            aborted: true,
+            bodyText: "client_aborted"
+          };
+        }
+        return {
+          ok: false,
+          status: 504,
+          authFailure: false,
+          quota: false,
+          bodyText: "gateway_timeout"
+        };
+      }
       return {
         ok: false,
         status: 502,
@@ -290,6 +336,7 @@ interface ForwardResult {
   quota: boolean;
   resetAtMs?: number;
   authFailure: boolean;
+  aborted?: boolean;
   bodyText?: string;
 }
 
@@ -512,8 +559,15 @@ function shouldForceQuota(accountName: string): boolean {
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
 
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  try {
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+  } catch (error) {
+    if (req.aborted) {
+      return Buffer.alloc(0);
+    }
+    throw error;
   }
 
   return Buffer.concat(chunks);
@@ -525,6 +579,10 @@ async function streamResponse(res: ServerResponse, upstream: Response): Promise<
     headers[key] = value;
   });
 
+  if (res.headersSent || res.writableEnded || res.destroyed) {
+    return;
+  }
+
   res.writeHead(upstream.status, headers);
 
   if (!upstream.body) {
@@ -535,16 +593,26 @@ async function streamResponse(res: ServerResponse, upstream: Response): Promise<
   const reader = upstream.body.getReader();
 
   while (true) {
+    if (res.destroyed || res.writableEnded) {
+      await reader.cancel();
+      break;
+    }
     const { done, value } = await reader.read();
     if (done) {
       break;
     }
     if (value) {
+      if (res.destroyed || res.writableEnded) {
+        await reader.cancel();
+        break;
+      }
       res.write(Buffer.from(value));
     }
   }
 
-  res.end();
+  if (!res.writableEnded && !res.destroyed) {
+    res.end();
+  }
 }
 
 async function safeReadText(response: Response): Promise<string> {
@@ -556,6 +624,9 @@ async function safeReadText(response: Response): Promise<string> {
 }
 
 async function writeErrorResponse(res: ServerResponse, status: number, bodyText?: string): Promise<void> {
+  if (res.headersSent || res.writableEnded || res.destroyed) {
+    return;
+  }
   res.writeHead(status, { "content-type": "application/json" });
   res.end(bodyText ?? "{}");
 }

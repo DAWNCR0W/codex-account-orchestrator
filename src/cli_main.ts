@@ -40,14 +40,15 @@ interface AddOptions {
   deviceAuth: boolean;
 }
 
-interface ListOptions {
-  details: boolean;
-}
-
 interface StatusOptions {
   json: boolean;
   compact: boolean;
   pretty: boolean;
+  doctor: boolean;
+  report?: string | boolean;
+  full: boolean;
+  expiresWithinHours: string;
+  maxFailures: string;
 }
 
 interface ImportCodexAuthOptions {
@@ -58,13 +59,8 @@ interface ImportCodexAuthOptions {
 }
 
 interface DoctorOptions {
-  json: boolean;
   expiresWithinHours: string;
   maxFailures: string;
-}
-
-interface ReportOptions {
-  format: string;
 }
 
 interface RunOptions {
@@ -147,8 +143,7 @@ program
 program
   .command("list")
   .description("List registered accounts")
-  .option("--details", "Show detailed account and usage status")
-  .action((options: ListOptions) => {
+  .action(() => {
     const baseDir = getBaseDir(program.opts().dataDir);
     ensureBaseDir(baseDir);
     const inspections = inspectAccounts(baseDir);
@@ -158,12 +153,7 @@ program
       return;
     }
 
-    if (!options.details) {
-      renderAccountSummary(inspections);
-      return;
-    }
-
-    renderAccountDetails(inspections);
+    renderAccountSummary(inspections);
   });
 
 program
@@ -209,10 +199,23 @@ program
 
 program
   .command("status")
-  .description("Show detailed account status and cooldown/usage signals")
+  .description("Show account status, health checks, and reports")
   .option("--json", "Output account status as JSON")
   .option("--compact", "Output a compact one-line summary per account")
   .option("--pretty", "Render a framed dashboard view")
+  .option("--full", "Output the verbose multi-line status view")
+  .option("--doctor", "Run health checks (exit codes)")
+  .option("--report [format]", "Generate a report (md or json)")
+  .option(
+    "--expires-within-hours <hours>",
+    "Warn when tokens expire within this window (doctor only)",
+    `${DEFAULT_HEALTH_OPTIONS.expiresWithinHours}`
+  )
+  .option(
+    "--max-failures <count>",
+    "Warn when consecutive failures exceed this count (doctor only)",
+    `${DEFAULT_HEALTH_OPTIONS.maxFailures}`
+  )
   .action((options: StatusOptions) => {
     const baseDir = getBaseDir(program.opts().dataDir);
     ensureBaseDir(baseDir);
@@ -223,13 +226,35 @@ program
       return;
     }
 
-    if (options.json) {
-      renderAccountDetailsJson(inspections);
+    if (options.report !== undefined) {
+      const format = normalizeReportFormat(options.report);
+
+      if (format === "json") {
+        renderAccountReportJson(inspections);
+        return;
+      }
+
+      renderAccountReportMarkdown(inspections);
       return;
     }
 
-    if (options.pretty) {
-      renderAccountPretty(inspections, baseDir);
+    if (options.doctor) {
+      const healthOptions = normalizeHealthOptions(options);
+      const summary = summarizeHealth(inspections, healthOptions);
+
+      if (options.json) {
+        renderDoctorJson(inspections, summary, healthOptions);
+        process.exitCode = summary.errorCount > 0 ? 2 : summary.warnCount > 0 ? 1 : 0;
+        return;
+      }
+
+      renderDoctorReport(inspections, summary, healthOptions);
+      process.exitCode = summary.errorCount > 0 ? 2 : summary.warnCount > 0 ? 1 : 0;
+      return;
+    }
+
+    if (options.json) {
+      renderAccountDetailsJson(inspections);
       return;
     }
 
@@ -238,12 +263,22 @@ program
       return;
     }
 
-    renderAccountDetails(inspections);
+    if (options.full) {
+      renderAccountDetails(inspections);
+      return;
+    }
+
+    if (options.pretty || process.stdout.isTTY) {
+      renderAccountPretty(inspections, baseDir);
+      return;
+    }
+
+    renderAccountCompact(inspections);
   });
 
 program
   .command("doctor")
-  .description("Run health checks for account readiness")
+  .description("Deprecated. Use `cao status --doctor` instead.")
   .option("--json", "Output health check results as JSON")
   .option(
     "--expires-within-hours <hours>",
@@ -255,7 +290,8 @@ program
     "Warn when consecutive failures exceed this count",
     `${DEFAULT_HEALTH_OPTIONS.maxFailures}`
   )
-  .action((options: DoctorOptions) => {
+  .action((options: DoctorOptions & { json: boolean }) => {
+    process.stderr.write("Warning: `cao doctor` is deprecated. Use `cao status --doctor`.\n");
     const baseDir = getBaseDir(program.opts().dataDir);
     ensureBaseDir(baseDir);
     const inspections = inspectAccounts(baseDir);
@@ -280,9 +316,10 @@ program
 
 program
   .command("report")
-  .description("Generate a shareable account status report")
+  .description("Deprecated. Use `cao status --report` instead.")
   .option("--format <format>", "Output format: md or json", "md")
-  .action((options: ReportOptions) => {
+  .action((options: { format: string }) => {
+    process.stderr.write("Warning: `cao report` is deprecated. Use `cao status --report`.\n");
     const baseDir = getBaseDir(program.opts().dataDir);
     ensureBaseDir(baseDir);
     const inspections = inspectAccounts(baseDir);
@@ -653,6 +690,14 @@ function normalizeHealthOptions(options: DoctorOptions): HealthCheckOptions {
       ? DEFAULT_HEALTH_OPTIONS.maxFailures
       : Math.max(1, maxFailures)
   };
+}
+
+function normalizeReportFormat(value: string | boolean | undefined): "md" | "json" {
+  if (typeof value === "string" && value.toLowerCase() === "json") {
+    return "json";
+  }
+
+  return "md";
 }
 
 async function promptForAccountSelection(

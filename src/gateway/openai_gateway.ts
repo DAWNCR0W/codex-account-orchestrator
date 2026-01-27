@@ -40,6 +40,10 @@ export class OpenAiGateway {
     logRequestDebug(req, body);
     const sessionKey = resolveSessionKey(req);
 
+    if (clientAbort.signal.aborted || req.aborted) {
+      return;
+    }
+
     const excluded = new Set<string>();
     let attempts = 0;
 

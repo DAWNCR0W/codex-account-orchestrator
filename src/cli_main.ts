@@ -47,6 +47,7 @@ interface ListOptions {
 interface StatusOptions {
   json: boolean;
   compact: boolean;
+  pretty: boolean;
 }
 
 interface ImportCodexAuthOptions {
@@ -211,6 +212,7 @@ program
   .description("Show detailed account status and cooldown/usage signals")
   .option("--json", "Output account status as JSON")
   .option("--compact", "Output a compact one-line summary per account")
+  .option("--pretty", "Render a framed dashboard view")
   .action((options: StatusOptions) => {
     const baseDir = getBaseDir(program.opts().dataDir);
     ensureBaseDir(baseDir);
@@ -223,6 +225,11 @@ program
 
     if (options.json) {
       renderAccountDetailsJson(inspections);
+      return;
+    }
+
+    if (options.pretty) {
+      renderAccountPretty(inspections, baseDir);
       return;
     }
 
@@ -934,6 +941,52 @@ function renderAccountReportJson(inspections: AccountInspection[]): void {
   );
 }
 
+function renderAccountPretty(inspections: AccountInspection[], baseDir: string): void {
+  const referenceMs = Date.now();
+  const health = summarizeHealth(inspections, DEFAULT_HEALTH_OPTIONS, referenceMs);
+  const width = resolvePrettyWidth();
+  const title = "CAO Status";
+
+  writeBoxTop(width, title);
+  writeBoxLine(width, `Generated: ${new Date(referenceMs).toISOString()}`);
+  writeBoxLine(width, `Base dir: ${truncateMiddle(baseDir, width - 4)}`);
+  writeBoxLine(
+    width,
+    `Accounts: ${inspections.length} (ok ${health.okCount}, warn ${health.warnCount}, error ${health.errorCount})`
+  );
+  writeBoxDivider(width, "Accounts");
+
+  const issuesByAccount = new Map<string, string[]>();
+  for (const issue of health.issues) {
+    const list = issuesByAccount.get(issue.account) ?? [];
+    list.push(`[${issue.severity}] ${issue.code}`);
+    issuesByAccount.set(issue.account, list);
+  }
+
+  for (const inspection of inspections) {
+    const status = inspection.status ?? {};
+    const marker = inspection.isDefault ? "*" : " ";
+    const loginStatus = inspection.loggedIn ? "logged-in" : "not-logged-in";
+    const expires = formatExpiryShort(inspection.tokenDetails?.expiresAtMs, referenceMs);
+    const cooldown = formatCooldownShort(status.cooldownUntilMs, referenceMs);
+    const lastQuota = formatRelativeShort(status.lastQuotaAtMs, referenceMs);
+    const failures = status.consecutiveFailures ?? 0;
+    const issues = issuesByAccount.get(inspection.name);
+    const statusBadge = colorStatusBadge(inspection, issues);
+
+    const summary = `${marker} ${inspection.name} ${statusBadge} | expires: ${expires} | cooldown: ${cooldown} | last_quota: ${lastQuota} | failures: ${failures}`;
+    writeBoxLine(width, summary);
+
+    if (issues && issues.length > 0) {
+      writeBoxLine(width, `  issues: ${issues.join(", ")}`);
+    }
+
+    writeBoxLine(width, `  login: ${loginStatus} | account_id: ${inspection.accountId ?? "unknown"}`);
+  }
+
+  writeBoxBottom(width);
+}
+
 function renderAccountCompact(inspections: AccountInspection[]): void {
   const referenceMs = Date.now();
 
@@ -949,6 +1002,105 @@ function renderAccountCompact(inspections: AccountInspection[]): void {
       `${marker} ${inspection.name} (${loginStatus}) | expires: ${expires} | cooldown: ${cooldown} | last_quota: ${lastQuota} | failures: ${status.consecutiveFailures ?? 0}\n`
     );
   }
+}
+
+function resolvePrettyWidth(): number {
+  if (!process.stdout.isTTY) {
+    return 88;
+  }
+
+  const columns = process.stdout.columns ?? 88;
+  return Math.min(Math.max(columns, 72), 120);
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(/\x1B\[[0-9;]*m/g, "");
+}
+
+function truncateMiddle(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  if (maxLength <= 5) {
+    return value.slice(0, maxLength);
+  }
+
+  const head = Math.ceil((maxLength - 1) / 2);
+  const tail = Math.floor((maxLength - 1) / 2);
+  return `${value.slice(0, head)}…${value.slice(value.length - tail)}`;
+}
+
+function truncateTail(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  if (maxLength <= 1) {
+    return value.slice(0, maxLength);
+  }
+
+  return `${value.slice(0, maxLength - 1)}…`;
+}
+
+function padLine(content: string, width: number): string {
+  const visibleLength = stripAnsi(content).length;
+  const maxContent = width - 4;
+  const safeContent =
+    visibleLength > maxContent ? truncateTail(stripAnsi(content), maxContent) : content;
+  const paddedLength = stripAnsi(safeContent).length;
+  const padding = Math.max(0, maxContent - paddedLength);
+  return `│ ${safeContent}${" ".repeat(padding)} │`;
+}
+
+function writeBoxTop(width: number, title: string): void {
+  const line = "─".repeat(width - 2);
+  const label = ` ${title} `;
+  const start = Math.max(0, Math.floor((line.length - label.length) / 2));
+  const withLabel = line.slice(0, start) + label + line.slice(start + label.length);
+  process.stdout.write(`┌${withLabel}┐\n`);
+}
+
+function writeBoxDivider(width: number, label?: string): void {
+  if (!label) {
+    process.stdout.write(`├${"─".repeat(width - 2)}┤\n`);
+    return;
+  }
+
+  const line = "─".repeat(width - 2);
+  const title = ` ${label} `;
+  const start = Math.max(0, Math.floor((line.length - title.length) / 2));
+  const withLabel = line.slice(0, start) + title + line.slice(start + title.length);
+  process.stdout.write(`├${withLabel}┤\n`);
+}
+
+function writeBoxLine(width: number, content: string): void {
+  process.stdout.write(`${padLine(content, width)}\n`);
+}
+
+function writeBoxBottom(width: number): void {
+  process.stdout.write(`└${"─".repeat(width - 2)}┘\n`);
+}
+
+function colorStatusBadge(inspection: AccountInspection, issues?: string[]): string {
+  const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+  const severity = issues?.some((issue) => issue.includes("[error]"))
+    ? "error"
+    : issues?.length
+      ? "warn"
+      : inspection.loggedIn
+        ? "ok"
+        : "error";
+
+  const text = severity === "ok" ? "OK" : severity === "warn" ? "WARN" : "ERROR";
+
+  if (!useColor) {
+    return `[${text}]`;
+  }
+
+  const color =
+    severity === "ok" ? "\x1b[32m" : severity === "warn" ? "\x1b[33m" : "\x1b[31m";
+  return `${color}[${text}]\x1b[0m`;
 }
 
 function formatDuration(durationMs: number): string {

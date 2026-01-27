@@ -2,6 +2,19 @@
 
 Codex OAuth account fallback orchestrator. It keeps **separate `CODEX_HOME` directories per account** and automatically falls back to the next account when quota is exhausted.
 
+## Requirements
+
+- Node.js 18+
+- Codex CLI installed and available on `PATH`
+
+## Install (npm)
+
+```bash
+npm install -g codex-account-orchestrator
+```
+
+The CLI is available as `cao` (alias) or `codex-account-orchestrator`.
+
 ## Install (local dev)
 
 ```bash
@@ -133,6 +146,12 @@ cao gateway status
 ### Debug logging
 
 Set `CAO_DEBUG_HEADERS=1` to log sanitized request/response headers in the gateway process. To capture the last request body for inspection, also set `CAO_CAPTURE_BODY=1` (saved to `/tmp/cao-last-body.json` by default).
+
+Additional debug flags:
+
+- `CAO_DEBUG_BODY=1` to log a sanitized body snippet.
+- `CAO_CAPTURE_BODY_PATH=/path/to/file.json` to override the capture path.
+- `CAO_FORCE_QUOTA_ACCOUNTS=accountA,accountB` to simulate quota failures for specific accounts.
 
 ## Notes
 

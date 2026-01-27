@@ -15,6 +15,11 @@ import {
   setDefaultAccount,
   validateAccountName
 } from "./account_manager";
+import {
+  DEFAULT_HEALTH_OPTIONS,
+  summarizeHealth,
+  type HealthCheckOptions
+} from "./account_health";
 import { inspectAccounts, type AccountInspection } from "./account_inspector";
 import { updateAccountStatus } from "./account_status_store";
 import { isCodexLoggedIn, runCodexLogin } from "./codex_auth";
@@ -49,6 +54,16 @@ interface ImportCodexAuthOptions {
   overwrite: boolean;
   current?: string;
   default?: string;
+}
+
+interface DoctorOptions {
+  json: boolean;
+  expiresWithinHours: string;
+  maxFailures: string;
+}
+
+interface ReportOptions {
+  format: string;
 }
 
 interface RunOptions {
@@ -217,6 +232,67 @@ program
     }
 
     renderAccountDetails(inspections);
+  });
+
+program
+  .command("doctor")
+  .description("Run health checks for account readiness")
+  .option("--json", "Output health check results as JSON")
+  .option(
+    "--expires-within-hours <hours>",
+    "Warn when tokens expire within this window",
+    `${DEFAULT_HEALTH_OPTIONS.expiresWithinHours}`
+  )
+  .option(
+    "--max-failures <count>",
+    "Warn when consecutive failures exceed this count",
+    `${DEFAULT_HEALTH_OPTIONS.maxFailures}`
+  )
+  .action((options: DoctorOptions) => {
+    const baseDir = getBaseDir(program.opts().dataDir);
+    ensureBaseDir(baseDir);
+    const inspections = inspectAccounts(baseDir);
+
+    if (inspections.length === 0) {
+      process.stdout.write("No accounts registered. Use `cao add <name>` first.\n");
+      return;
+    }
+
+    const healthOptions = normalizeHealthOptions(options);
+    const summary = summarizeHealth(inspections, healthOptions);
+
+    if (options.json) {
+      renderDoctorJson(inspections, summary, healthOptions);
+      process.exitCode = summary.errorCount > 0 ? 2 : summary.warnCount > 0 ? 1 : 0;
+      return;
+    }
+
+    renderDoctorReport(inspections, summary, healthOptions);
+    process.exitCode = summary.errorCount > 0 ? 2 : summary.warnCount > 0 ? 1 : 0;
+  });
+
+program
+  .command("report")
+  .description("Generate a shareable account status report")
+  .option("--format <format>", "Output format: md or json", "md")
+  .action((options: ReportOptions) => {
+    const baseDir = getBaseDir(program.opts().dataDir);
+    ensureBaseDir(baseDir);
+    const inspections = inspectAccounts(baseDir);
+
+    if (inspections.length === 0) {
+      process.stdout.write("No accounts registered. Use `cao add <name>` first.\n");
+      return;
+    }
+
+    const format = options.format.toLowerCase();
+
+    if (format === "json") {
+      renderAccountReportJson(inspections);
+      return;
+    }
+
+    renderAccountReportMarkdown(inspections);
   });
 
 const importCommand = program.command("import").description("Import accounts from other tools");
@@ -558,6 +634,20 @@ function getAuthFilePath(accountDir: string): string {
   return path.join(accountDir, AUTH_FILE_NAME);
 }
 
+function normalizeHealthOptions(options: DoctorOptions): HealthCheckOptions {
+  const expiresWithinHours = Number.parseInt(options.expiresWithinHours, 10);
+  const maxFailures = Number.parseInt(options.maxFailures, 10);
+
+  return {
+    expiresWithinHours: Number.isNaN(expiresWithinHours)
+      ? DEFAULT_HEALTH_OPTIONS.expiresWithinHours
+      : Math.max(1, expiresWithinHours),
+    maxFailures: Number.isNaN(maxFailures)
+      ? DEFAULT_HEALTH_OPTIONS.maxFailures
+      : Math.max(1, maxFailures)
+  };
+}
+
 async function promptForAccountSelection(
   inspections: AccountInspection[]
 ): Promise<string | undefined> {
@@ -741,6 +831,107 @@ function renderAccountDetailsJson(inspections: AccountInspection[]): void {
   const referenceMs = Date.now();
   const payload = inspections.map((inspection) => toAccountDetailRecord(inspection, referenceMs));
   process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+}
+
+function renderDoctorJson(
+  inspections: AccountInspection[],
+  summary: ReturnType<typeof summarizeHealth>,
+  options: HealthCheckOptions
+): void {
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    thresholds: options,
+    totals: {
+      accounts: inspections.length,
+      ok: summary.okCount,
+      warnings: summary.warnCount,
+      errors: summary.errorCount
+    },
+    issues: summary.issues
+  };
+
+  process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+}
+
+function renderDoctorReport(
+  inspections: AccountInspection[],
+  summary: ReturnType<typeof summarizeHealth>,
+  options: HealthCheckOptions
+): void {
+  process.stdout.write("Account health check\n");
+  process.stdout.write(
+    `Thresholds: expires_within=${options.expiresWithinHours}h, max_failures=${options.maxFailures}\n`
+  );
+  process.stdout.write(
+    `Totals: ${summary.okCount} ok, ${summary.warnCount} warnings, ${summary.errorCount} errors\n\n`
+  );
+
+  if (summary.issues.length === 0) {
+    process.stdout.write("All accounts look healthy.\n");
+    return;
+  }
+
+  const issuesByAccount = new Map<string, typeof summary.issues>();
+  for (const issue of summary.issues) {
+    const list = issuesByAccount.get(issue.account) ?? [];
+    list.push(issue);
+    issuesByAccount.set(issue.account, list);
+  }
+
+  for (const inspection of inspections) {
+    const issues = issuesByAccount.get(inspection.name);
+    const marker = inspection.isDefault ? "*" : " ";
+
+    if (!issues || issues.length === 0) {
+      process.stdout.write(`${marker} ${inspection.name}: OK\n`);
+      continue;
+    }
+
+    const worstSeverity = issues.some((issue) => issue.severity === "error") ? "ERROR" : "WARN";
+    process.stdout.write(`${marker} ${inspection.name}: ${worstSeverity}\n`);
+
+    for (const issue of issues) {
+      process.stdout.write(`  - [${issue.severity}] ${issue.code}: ${issue.message}\n`);
+    }
+  }
+}
+
+function renderAccountReportMarkdown(inspections: AccountInspection[]): void {
+  const referenceMs = Date.now();
+  const header = [
+    "| Account | Default | Login | Token Expires | Cooldown | Last Quota | Failures |",
+    "| --- | --- | --- | --- | --- | --- | --- |"
+  ];
+
+  const rows = inspections.map((inspection) => {
+    const status = inspection.status ?? {};
+    const login = inspection.loggedIn ? "logged-in" : "not-logged-in";
+    const expires = formatExpiryShort(inspection.tokenDetails?.expiresAtMs, referenceMs);
+    const cooldown = formatCooldownShort(status.cooldownUntilMs, referenceMs);
+    const lastQuota = formatRelativeShort(status.lastQuotaAtMs, referenceMs);
+
+    return `| ${inspection.name} | ${inspection.isDefault ? "yes" : "no"} | ${login} | ${expires} | ${cooldown} | ${lastQuota} | ${status.consecutiveFailures ?? 0} |`;
+  });
+
+  process.stdout.write(`# CAO Account Report\n\n`);
+  process.stdout.write(`Generated: ${new Date(referenceMs).toISOString()}\n\n`);
+  process.stdout.write(header.join("\n") + "\n");
+  process.stdout.write(rows.join("\n") + "\n");
+}
+
+function renderAccountReportJson(inspections: AccountInspection[]): void {
+  const referenceMs = Date.now();
+  const payload = inspections.map((inspection) => toAccountDetailRecord(inspection, referenceMs));
+  process.stdout.write(
+    JSON.stringify(
+      {
+        generatedAt: new Date(referenceMs).toISOString(),
+        accounts: payload
+      },
+      null,
+      2
+    ) + "\n"
+  );
 }
 
 function renderAccountCompact(inspections: AccountInspection[]): void {

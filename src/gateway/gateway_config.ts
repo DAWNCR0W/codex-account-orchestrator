@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 
 export interface GatewayConfig {
@@ -31,7 +32,7 @@ export function resolveGatewayConfig(overrides: Partial<GatewayConfig>): Gateway
 }
 
 export function getGatewayConfigPath(): string {
-  return path.join(process.env.HOME ?? "", ".codex-account-orchestrator", "gateway.json");
+  return path.join(os.homedir(), ".codex-account-orchestrator", "gateway.json");
 }
 
 export function loadGatewayConfig(): Partial<GatewayConfig> {
@@ -42,7 +43,16 @@ export function loadGatewayConfig(): Partial<GatewayConfig> {
   }
 
   const raw = fs.readFileSync(configPath, "utf8");
-  return JSON.parse(raw) as Partial<GatewayConfig>;
+  try {
+    return JSON.parse(raw) as Partial<GatewayConfig>;
+  } catch (error) {
+    const backupPath = `${configPath}.corrupt-${Date.now()}`;
+    fs.writeFileSync(backupPath, raw, "utf8");
+    process.stderr.write(
+      `Warning: gateway.json was invalid and has been backed up to ${backupPath}.\n`
+    );
+    return {};
+  }
 }
 
 export function saveGatewayConfig(config: Partial<GatewayConfig>): void {

@@ -5,7 +5,7 @@ import { REGISTRY_FILE_NAME } from "./constants";
 
 export function getBaseDir(dataDir?: string): string {
   if (dataDir && dataDir.trim().length > 0) {
-    return dataDir;
+    return path.resolve(dataDir);
   }
 
   return path.join(os.homedir(), ".codex-account-orchestrator");

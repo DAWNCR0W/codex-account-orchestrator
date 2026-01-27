@@ -135,7 +135,16 @@ function loadTokens(accountDir: string): TokenPair | undefined {
   }
 
   const raw = fs.readFileSync(authPath, "utf8");
-  const data = JSON.parse(raw) as AccountTokensFile;
+  let data: AccountTokensFile;
+
+  try {
+    data = JSON.parse(raw) as AccountTokensFile;
+  } catch (error) {
+    process.stderr.write(
+      `Warning: auth.json for ${accountDir} is invalid and will be skipped.\n`
+    );
+    return undefined;
+  }
   const tokens = data.tokens ?? {};
 
   if (!tokens.access_token || !tokens.refresh_token) {

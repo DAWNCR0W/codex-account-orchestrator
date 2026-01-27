@@ -64,12 +64,26 @@ export function disableGatewayShim(): boolean {
 
 function resolveCodexPath(): string {
   const shimPath = path.join(resolveShimDir(), "codex");
-  const whichOutput = execSync("which -a codex", { encoding: "utf8" })
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const candidates: string[] = [];
+  const whichOutput = tryExec("which -a codex");
 
-  for (const line of whichOutput) {
+  if (whichOutput) {
+    candidates.push(
+      ...whichOutput
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+    );
+  }
+
+  if (candidates.length === 0) {
+    const fallback = tryExec("command -v codex");
+    if (fallback) {
+      candidates.push(fallback.trim());
+    }
+  }
+
+  for (const line of candidates) {
     if (line.includes("aliased to")) {
       continue;
     }
@@ -81,14 +95,9 @@ function resolveCodexPath(): string {
     }
   }
 
-  const fallback = execSync("command -v codex", { encoding: "utf8" }).trim();
-  if (!fallback || fallback === shimPath) {
-    throw new Error(
-      "codex binary not found in PATH (or only the CAO shim is present). Disable the shim first."
-    );
-  }
-
-  return fallback;
+  throw new Error(
+    "codex binary not found in PATH (or only the CAO shim is present). Disable the shim first."
+  );
 }
 
 function resolveShimDir(): string {
@@ -98,4 +107,12 @@ function resolveShimDir(): string {
 function isDirInPath(dir: string): boolean {
   const envPath = process.env.PATH ?? "";
   return envPath.split(":").includes(dir);
+}
+
+function tryExec(command: string): string | undefined {
+  try {
+    return execSync(command, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return undefined;
+  }
 }

@@ -151,6 +151,12 @@ forced_login_method = "chatgpt"
 
 On quota errors, CAO re-runs Codex with the next account and can recheck all accounts for multiple passes.
 
+## Security Model
+
+CAO is responsible for account routing and account-context selection. It does not execute user commands, grant sandbox permissions, or bypass approval policy.
+
+The Codex runtime remains responsible for the execution boundary, including sandboxing, filesystem and network access, and approval enforcement. A CAO routing decision only determines which account context is used; it does not expand what Codex is allowed to do inside that context.
+
 ## Data Layout
 
 ```text
